@@ -64,7 +64,10 @@
   .tool .running::before { content: "● "; animation: blink 1s infinite; }
   @keyframes blink { 50% { opacity: .2; } }
   a { color: var(--tool); }
-  .foot { display: flex; gap: 12px; color: var(--muted); font-size: 11px; margin-top: auto; }
+  .foot { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 11px; margin-top: auto; }
+  .src { border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-weight: 600;
+    letter-spacing: .03em; color: var(--muted); }
+  .src.desktop { color: var(--tool); border-color: var(--tool); }
   .card { cursor: pointer; transition: border-color .15s, transform .15s; }
   .card:hover { border-color: var(--muted); }
   .card:focus-visible { outline: 2px solid var(--tool); outline-offset: 2px; }
@@ -146,6 +149,13 @@ const WAIT = {
   permission: ["needs approval", "Waiting for you to approve a tool call"],
   question: ["has a question", "Waiting for you to answer a question"],
 };
+// Registry "entrypoint" -> footer tag. Unknown values show as-is.
+const SOURCE = {cli: ["CLI", "Started from a terminal"], "claude-desktop": ["Desktop", "Started from Claude Desktop"]};
+function sourceTag(ep) {
+  if (!ep) return "";
+  const [label, tip] = SOURCE[ep] || [ep, `entrypoint: ${ep}`];
+  return `<span class="src ${ep === "claude-desktop" ? "desktop" : ""}" title="${esc(tip)}">${esc(label)}</span>`;
+}
 const isWorking = s => s.status === "busy" && !s.waiting;
 const effStatus = s => s.waiting ? s.waiting.waiting : (s.status || "unknown");
 function waitBox(s) {
@@ -181,6 +191,7 @@ function card(s, now) {
     ${s.title ? `<div class="title">${esc(s.title)}</div>` : ""}
     ${rows}
     <div class="foot">
+      ${sourceTag(s.entrypoint)}
       <span>pid ${esc(s.pid)}</span>
       ${s.version ? `<span>v${esc(s.version)}</span>` : ""}
       ${s.pr ? `<a href="${esc(s.pr.url)}" target="_blank" rel="noopener">PR #${esc(s.pr.number ?? "")}</a>` : ""}

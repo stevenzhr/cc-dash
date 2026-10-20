@@ -272,6 +272,7 @@ def collect_sessions():
             "startedAt": reg.get("startedAt"),
             "version": reg.get("version"),
             "kind": reg.get("kind"),
+            "entrypoint": reg.get("entrypoint"),
         }
         if transcript:
             s.update(parse_transcript(transcript))

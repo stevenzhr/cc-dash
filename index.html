@@ -10,19 +10,19 @@
   :root {
     --bg: #f6f5f2; --card: #ffffff; --fg: #1f1e1c; --muted: #6b6862; --line: #e4e1da;
     --busy: #d97706; --busy-bg: #fef3e2; --idle: #6b7280; --idle-bg: #f0efec;
-    --tool: #2563eb; --accent: #c2410c; --wait: #b91c1c; --wait-bg: #fde8e8;
+    --tool: #2563eb; --accent: #c2410c; --wait: #b91c1c; --wait-bg: #fde8e8; --term: #15803d;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #161614; --card: #201f1d; --fg: #ecebe7; --muted: #9c988f; --line: #33312d;
       --busy: #f59e0b; --busy-bg: #3a2a10; --idle: #9ca3af; --idle-bg: #2a2926;
-      --tool: #60a5fa; --accent: #fb923c; --wait: #f87171; --wait-bg: #3b1717;
+      --tool: #60a5fa; --accent: #fb923c; --wait: #f87171; --wait-bg: #3b1717; --term: #4ade80;
     }
   }
   :root[data-theme="dark"] {
     --bg: #161614; --card: #201f1d; --fg: #ecebe7; --muted: #9c988f; --line: #33312d;
     --busy: #f59e0b; --busy-bg: #3a2a10; --idle: #9ca3af; --idle-bg: #2a2926;
-    --tool: #60a5fa; --accent: #fb923c; --wait: #f87171; --wait-bg: #3b1717;
+    --tool: #60a5fa; --accent: #fb923c; --wait: #f87171; --wait-bg: #3b1717; --term: #4ade80;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg);
@@ -67,6 +67,7 @@
   .foot { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 11px; margin-top: auto; }
   .src { border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-weight: 600;
     letter-spacing: .03em; color: var(--muted); }
+  .src.cli { color: var(--term); border-color: var(--term); }
   .src.desktop { color: var(--tool); border-color: var(--tool); }
   .card { cursor: pointer; transition: border-color .15s, transform .15s; }
   .card:hover { border-color: var(--muted); }
@@ -154,7 +155,7 @@ const SOURCE = {cli: ["CLI", "Started from a terminal"], "claude-desktop": ["Des
 function sourceTag(ep) {
   if (!ep) return "";
   const [label, tip] = SOURCE[ep] || [ep, `entrypoint: ${ep}`];
-  return `<span class="src ${ep === "claude-desktop" ? "desktop" : ""}" title="${esc(tip)}">${esc(label)}</span>`;
+  return `<span class="src ${ep === "claude-desktop" ? "desktop" : ep === "cli" ? "cli" : ""}" title="${esc(tip)}">${esc(label)}</span>`;
 }
 const isWorking = s => s.status === "busy" && !s.waiting;
 const effStatus = s => s.waiting ? s.waiting.waiting : (s.status || "unknown");

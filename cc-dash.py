@@ -108,7 +108,7 @@ def first_text(content):
 def parse_transcript(path):
     info = {
         "title": None, "lastPrompt": None, "lastReply": None, "lastTool": None,
-        "toolPending": False, "pr": None, "lastActivity": None, "mode": None,
+        "toolPending": False, "pr": None, "lastActivity": None,
     }
     try:
         entries = tail_lines(path)
@@ -127,8 +127,6 @@ def parse_transcript(path):
             info["lastPrompt"] = e["lastPrompt"]
         elif t == "pr-link" and e.get("prUrl"):
             info["pr"] = {"url": e["prUrl"], "number": e.get("prNumber")}
-        elif t == "mode" and e.get("mode"):
-            info["mode"] = e["mode"]
         elif t in ("assistant", "user") and not e.get("isSidechain"):
             content = (e.get("message") or {}).get("content")
             if t == "assistant":

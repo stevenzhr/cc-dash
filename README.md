@@ -21,7 +21,7 @@ No dependencies beyond the Python 3 standard library. Binds to `127.0.0.1` only,
 | Source | Used for |
 |---|---|
 | `~/.claude/sessions/<pid>.json` | Live session registry: name, cwd, `busy`/`idle` status, start time, version. Entries whose pid is gone are skipped. |
-| `~/.claude/projects/*/<sessionId>.jsonl` (last 512 KB) | AI title, last prompt, last tool call (and whether it is still running), last reply, PR link, permission mode |
+| `~/.claude/projects/*/<sessionId>.jsonl` (last 512 KB) | AI title, last prompt, last tool call (and whether it is still running), last reply, PR link |
 | Same transcript, last 4 MB (detail view) | Last 150 prompts / replies / tool calls; tool input and output clipped to 4000 chars |
 | `git -C <cwd> branch --show-current` | Branch, cached 30 s |
 

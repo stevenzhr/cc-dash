@@ -106,6 +106,22 @@ def first_text(content):
     return None
 
 
+def prompt_text(e):
+    """Text of a real user prompt, or None for tool results, meta entries, slash
+    commands and notifications (<command-name>, <local-command-stdout>, <task-notification>)."""
+    if e.get("type") != "user" or e.get("isMeta") or e.get("isSidechain"):
+        return None
+    content = (e.get("message") or {}).get("content")
+    if isinstance(content, list) and any(
+        isinstance(b, dict) and b.get("type") == "tool_result" for b in content
+    ):
+        return None
+    text = user_text(content)
+    if not text or text.startswith("<") or text.startswith("[Request interrupted"):
+        return None
+    return text
+
+
 def parse_transcript(path):
     info = {
         "title": None, "lastPrompt": None, "lastReply": None, "lastTool": None,
@@ -118,6 +134,7 @@ def parse_transcript(path):
         return info
 
     pending = {}  # tool_use_id -> tool summary
+    fallback_prompt = None
     for e in entries:
         if not isinstance(e, dict):
             continue
@@ -125,7 +142,7 @@ def parse_transcript(path):
         if t == "ai-title" and e.get("aiTitle"):
             info["title"] = e["aiTitle"]
         elif t == "last-prompt" and e.get("lastPrompt"):
-            info["lastPrompt"] = e["lastPrompt"]
+            fallback_prompt = e["lastPrompt"]
         elif t == "pr-link" and e.get("prUrl"):
             info["pr"] = {"url": e["prUrl"], "number": e.get("prNumber")}
         elif t in ("assistant", "user") and not e.get("isSidechain"):
@@ -144,9 +161,15 @@ def parse_transcript(path):
                         if block.get("id"):
                             pending[block["id"]] = tool
             else:
+                prompt = prompt_text(e)
+                if prompt:
+                    # New turn: earlier reply/tool belong to the previous one.
+                    info.update(lastPrompt=prompt, lastReply=None, lastTool=None)
                 for block in content if isinstance(content, list) else []:
                     if isinstance(block, dict) and block.get("type") == "tool_result":
                         pending.pop(block.get("tool_use_id"), None)
+    if info["lastPrompt"] is None:
+        info["lastPrompt"] = fallback_prompt  # prompt itself scrolled out of the tail
     info["toolPending"] = bool(pending)
     return info
 
@@ -223,10 +246,9 @@ def session_timeline(session_id):
                 if item is not None:
                     item["result"] = clip(tool_result_text(r.get("content")))
                     item["isError"] = bool(r.get("is_error"))
-            if not results and not e.get("isMeta"):
-                text = user_text(content)
-                if text:
-                    items.append({"kind": "prompt", "text": text, "ts": ts})
+            text = prompt_text(e)
+            if text:
+                items.append({"kind": "prompt", "text": text, "ts": ts})
     return {"sessionId": session_id, "items": items[-DETAIL_MAX_ITEMS:]}
 
 

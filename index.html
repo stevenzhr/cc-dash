@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Claude Sessions</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 <style>
   :root {
     --bg: #f6f5f2; --card: #ffffff; --fg: #1f1e1c; --muted: #6b6862; --line: #e4e1da;
@@ -57,6 +59,51 @@
   @keyframes blink { 50% { opacity: .2; } }
   a { color: var(--tool); }
   .foot { display: flex; gap: 12px; color: var(--muted); font-size: 11px; margin-top: auto; }
+  .card { cursor: pointer; transition: border-color .15s, transform .15s; }
+  .card:hover { border-color: var(--muted); }
+  .card:focus-visible { outline: 2px solid var(--tool); outline-offset: 2px; }
+
+  dialog { border: 1px solid var(--line); border-radius: 12px; padding: 0; background: var(--bg); color: var(--fg);
+    width: min(960px, calc(100vw - 32px)); height: min(88vh, 1000px); max-height: none; }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  dialog[open] { display: flex; flex-direction: column; }
+  .d-head { padding: 14px 18px; border-bottom: 1px solid var(--line); background: var(--card);
+    display: flex; flex-direction: column; gap: 4px; }
+  .d-head .top { gap: 10px; }
+  .d-head .since { margin-left: 0; }
+  dialog:focus, dialog:focus-visible { outline: none; }
+  .d-close { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 22px;
+    line-height: 1; cursor: pointer; padding: 0 4px; }
+  .d-close:hover { color: var(--fg); }
+  .d-body { overflow-y: auto; padding: 16px 18px 24px; display: flex; flex-direction: column; gap: 10px; flex: 1; }
+  .msg { border-radius: 10px; padding: 10px 14px; min-width: 0; }
+  .msg.prompt { background: var(--busy-bg); align-self: flex-end; max-width: 85%; }
+  .msg.reply { background: var(--card); border: 1px solid var(--line); }
+  .msg .who { font-size: 11px; color: var(--muted); text-transform: uppercase; margin-bottom: 4px; }
+  .md { word-break: break-word; }
+  .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+  .md p, .md ul, .md ol, .md pre, .md table, .md blockquote { margin: 0 0 8px; }
+  .md h1, .md h2, .md h3, .md h4 { margin: 12px 0 6px; line-height: 1.3; }
+  .md h1 { font-size: 18px; } .md h2 { font-size: 16px; } .md h3, .md h4 { font-size: 14px; }
+  .md code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: var(--idle-bg);
+    padding: 1px 4px; border-radius: 4px; }
+  .md pre { background: var(--idle-bg); padding: 10px; border-radius: 6px; overflow-x: auto; }
+  .md pre code { background: none; padding: 0; }
+  .md table { border-collapse: collapse; display: block; overflow-x: auto; }
+  .md th, .md td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
+  .md th { background: var(--idle-bg); }
+  .md blockquote { border-left: 3px solid var(--line); padding-left: 10px; color: var(--muted); }
+  .md.plain { white-space: pre-wrap; }
+  details.tc { font-size: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+  details.tc summary { cursor: pointer; padding: 6px 10px; font-family: ui-monospace, Menlo, monospace;
+    color: var(--tool); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; list-style-position: inside; }
+  details.tc summary .dt { color: var(--muted); }
+  details.tc.err summary { color: #dc2626; }
+  details.tc.pending summary::after { content: "  ● running"; color: var(--busy); animation: blink 1s infinite; }
+  details.tc pre { margin: 0; padding: 8px 10px; border-top: 1px solid var(--line); white-space: pre-wrap;
+    word-break: break-word; font-family: ui-monospace, Menlo, monospace; font-size: 12px; max-height: 360px; overflow-y: auto; }
+  details.tc .lbl { padding: 6px 10px 0; color: var(--muted); font-size: 11px; text-transform: uppercase; }
+  .ts { color: var(--muted); font-size: 11px; font-weight: normal; text-transform: none; margin-left: 6px; }
   .empty { color: var(--muted); padding: 40px 16px; text-align: center; grid-column: 1 / -1; }
 </style>
 </head>
@@ -67,6 +114,10 @@
   <span class="updated" id="updated"></span>
 </header>
 <main id="grid"></main>
+<dialog id="detail">
+  <div class="d-head" id="d-head"></div>
+  <div class="d-body" id="d-body"></div>
+</dialog>
 <script>
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const home = s => (s || "").replace(/^\/Users\/[^/]+/, "~");
@@ -90,7 +141,7 @@ function card(s, now) {
     ["tool", tool && `<span class="tool">${tool}</span>`],
     ["reply", s.lastReply && esc(s.lastReply)],
   ].filter(r => r[1]).map(([k, v]) => `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join("");
-  return `<div class="card ${esc(status)}">
+  return `<div class="card ${esc(status)}" tabindex="0" role="button" data-id="${esc(s.sessionId)}">
     <div class="top">
       <span class="name" title="${esc(s.name)}">${esc(s.name || s.sessionId)}</span>
       <span class="badge ${esc(status)}">${esc(status)}</span>
@@ -109,10 +160,96 @@ function card(s, now) {
   </div>`;
 }
 
+let latest = {};  // sessionId -> session summary from last poll
+
+function md(text) {
+  if (window.marked && window.DOMPurify) {
+    return `<div class="md">${DOMPurify.sanitize(marked.parse(text, {gfm: true, breaks: true}))}</div>`;
+  }
+  return `<div class="md plain">${esc(text)}</div>`;  // CDN unreachable: plain text
+}
+const hhmm = ts => ts ? `<span class="ts">${new Date(ts).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"})}</span>` : "";
+
+function headHtml(s) {
+  const status = s.status || "unknown";
+  return `<div class="top">
+      <span class="name">${esc(s.name || s.sessionId)}</span>
+      <span class="badge ${esc(status)}">${esc(status)}</span>
+      <span class="since">${s.statusUpdatedAt ? ago(s.statusUpdatedAt, Date.now()) : ""}</span>
+      <button class="d-close" aria-label="Close" onclick="closeDetail()">×</button>
+    </div>
+    <div class="meta">${esc(home(s.cwd))}${s.branch ? ` <span class="br">⎇ ${esc(s.branch)}</span>` : ""} · ${esc(s.sessionId)}</div>
+    ${s.title ? `<div class="title">${esc(s.title)}</div>` : ""}`;
+}
+
+function itemHtml(it, i, open) {
+  if (it.kind === "prompt") return `<div class="msg prompt"><div class="who">you${hhmm(it.ts)}</div>${md(it.text)}</div>`;
+  if (it.kind === "reply") return `<div class="msg reply"><div class="who">claude${hhmm(it.ts)}</div>${md(it.text)}</div>`;
+  const cls = ["tc", it.isError ? "err" : "", it.result === null ? "pending" : ""].join(" ");
+  return `<details class="${cls}" data-i="${i}" ${open.has(String(i)) ? "open" : ""}>
+    <summary>${esc(it.name)}${it.detail ? ` <span class="dt">· ${esc(it.detail)}</span>` : ""}</summary>
+    <div class="lbl">input</div><pre>${esc(it.input)}</pre>
+    ${it.result !== null ? `<div class="lbl">${it.isError ? "error" : "result"}</div><pre>${esc(it.result)}</pre>` : ""}
+  </details>`;
+}
+
+const dlg = document.getElementById("detail");
+let detailId = null, detailSig = null;
+
+async function loadDetail() {
+  if (!detailId) return;
+  const id = detailId;
+  const s = latest[id];
+  if (s) document.getElementById("d-head").innerHTML = headHtml(s);
+  try {
+    const r = await fetch(`/api/session?id=${encodeURIComponent(id)}`, {cache: "no-store"});
+    if (!r.ok) throw new Error(r.status);
+    const {items} = await r.json();
+    if (id !== detailId) return;
+    const last = items[items.length - 1];
+    const sig = `${items.length}|${last && (last.result ?? last.text ?? "").length}`;
+    if (sig === detailSig) return;
+    detailSig = sig;
+    const body = document.getElementById("d-body");
+    const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+    const open = new Set([...body.querySelectorAll("details[open]")].map(d => d.dataset.i));
+    body.innerHTML = items.length ? items.map((it, i) => itemHtml(it, i, open)).join("")
+      : `<div class="empty">No conversation yet.</div>`;
+    if (atBottom) body.scrollTop = body.scrollHeight;
+  } catch (e) {
+    document.getElementById("d-body").innerHTML = `<div class="empty">Could not load transcript.</div>`;
+  }
+}
+
+function openDetail(id) {
+  detailId = id; detailSig = null;
+  history.replaceState(null, "", `#s=${encodeURIComponent(id)}`);
+  const body = document.getElementById("d-body");
+  body.innerHTML = `<div class="empty">Loading…</div>`;
+  body.scrollTop = 0;
+  dlg.showModal();
+  loadDetail().then(() => { body.scrollTop = body.scrollHeight; });
+}
+function closeDetail() { dlg.close(); }
+dlg.addEventListener("close", () => { detailId = null; history.replaceState(null, "", location.pathname); });
+dlg.addEventListener("click", e => { if (e.target === dlg) closeDetail(); });  // backdrop
+const grid = document.getElementById("grid");
+grid.addEventListener("click", e => {
+  if (e.target.closest("a")) return;
+  const c = e.target.closest(".card");
+  if (c && c.dataset.id) openDetail(c.dataset.id);
+});
+grid.addEventListener("keydown", e => {
+  const c = e.target.closest(".card");
+  if (c && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openDetail(c.dataset.id); }
+});
+setInterval(loadDetail, 3000);
+
 async function refresh() {
   try {
     const r = await fetch("/api/sessions", {cache: "no-store"});
     const {now, sessions} = await r.json();
+    latest = Object.fromEntries(sessions.map(s => [s.sessionId, s]));
     const rank = s => s.status === "busy" ? 0 : 1;
     sessions.sort((a, b) => rank(a) - rank(b) || (b.statusUpdatedAt || 0) - (a.statusUpdatedAt || 0));
     const busy = sessions.filter(s => s.status === "busy").length;
@@ -127,7 +264,10 @@ async function refresh() {
     document.getElementById("updated").textContent = "server unreachable";
   }
 }
-refresh();
+refresh().then(() => {
+  const m = location.hash.match(/^#s=(.+)$/);  // deep link to a session's detail
+  if (m) openDetail(decodeURIComponent(m[1]));
+});
 setInterval(refresh, 2000);
 </script>
 </body>

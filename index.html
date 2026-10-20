@@ -10,19 +10,19 @@
   :root {
     --bg: #f6f5f2; --card: #ffffff; --fg: #1f1e1c; --muted: #6b6862; --line: #e4e1da;
     --busy: #d97706; --busy-bg: #fef3e2; --idle: #6b7280; --idle-bg: #f0efec;
-    --tool: #2563eb; --accent: #c2410c;
+    --tool: #2563eb; --accent: #c2410c; --wait: #b91c1c; --wait-bg: #fde8e8;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #161614; --card: #201f1d; --fg: #ecebe7; --muted: #9c988f; --line: #33312d;
       --busy: #f59e0b; --busy-bg: #3a2a10; --idle: #9ca3af; --idle-bg: #2a2926;
-      --tool: #60a5fa; --accent: #fb923c;
+      --tool: #60a5fa; --accent: #fb923c; --wait: #f87171; --wait-bg: #3b1717;
     }
   }
   :root[data-theme="dark"] {
     --bg: #161614; --card: #201f1d; --fg: #ecebe7; --muted: #9c988f; --line: #33312d;
     --busy: #f59e0b; --busy-bg: #3a2a10; --idle: #9ca3af; --idle-bg: #2a2926;
-    --tool: #60a5fa; --accent: #fb923c;
+    --tool: #60a5fa; --accent: #fb923c; --wait: #f87171; --wait-bg: #3b1717;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg);
@@ -46,6 +46,11 @@
   .badge.busy { color: var(--busy); background: var(--busy-bg); }
   .badge.idle, .badge.unknown { color: var(--idle); background: var(--idle-bg); }
   .badge.shell { color: var(--tool); background: var(--idle-bg); }
+  .badge.permission, .badge.question { color: var(--wait); background: var(--wait-bg); }
+  .card.waiting { border-left: 4px solid var(--wait); }
+  .waitbox { background: var(--wait-bg); color: var(--wait); border-radius: 6px; padding: 6px 10px;
+    font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .waitbox code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
   .since { margin-left: auto; color: var(--muted); font-size: 12px; flex-shrink: 0; }
   .meta { color: var(--muted); font-size: 12px; font-family: ui-monospace, Menlo, monospace;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -137,14 +142,25 @@ const STATUS = {
   idle: ["idle", "Waiting for your input"],
   shell: ["idle · bg shell", "Turn finished, waiting for your input; a background shell is still running"],
 };
-const isWorking = s => s.status === "busy";
+const WAIT = {
+  permission: ["needs approval", "Waiting for you to approve a tool call"],
+  question: ["has a question", "Waiting for you to answer a question"],
+};
+const isWorking = s => s.status === "busy" && !s.waiting;
+const effStatus = s => s.waiting ? s.waiting.waiting : (s.status || "unknown");
+function waitBox(s) {
+  const w = s.waiting;
+  if (!w) return "";
+  const what = w.tool ? `<code>${esc(w.tool)}</code>${w.detail ? ` · ${esc(w.detail)}` : ""}` : esc(w.message || "");
+  return `<div class="waitbox" title="${esc(w.message || w.detail || "")}">⚠ ${what}</div>`;
+}
 function badge(status) {
-  const [label, tip] = STATUS[status] || [status, `status: ${status}`];
+  const [label, tip] = WAIT[status] || STATUS[status] || [status, `status: ${status}`];
   return `<span class="badge ${esc(status)}" title="${esc(tip)} (status: ${esc(status)})">${esc(label)}</span>`;
 }
 
 function card(s, now) {
-  const status = s.status || "unknown";
+  const status = effStatus(s);
   const tool = s.lastTool
     ? `<span class="${s.toolPending && status === "busy" ? "running" : ""}">${esc(s.lastTool.name)}</span>` +
       (s.lastTool.detail ? ` · ${esc(s.lastTool.detail)}` : "")
@@ -154,13 +170,14 @@ function card(s, now) {
     ["tool", tool && `<span class="tool">${tool}</span>`],
     ["reply", s.lastReply && esc(s.lastReply)],
   ].filter(r => r[1]).map(([k, v]) => `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join("");
-  return `<div class="card ${esc(status)}" tabindex="0" role="button" data-id="${esc(s.sessionId)}">
+  return `<div class="card ${esc(status)}${s.waiting ? " waiting" : ""}" tabindex="0" role="button" data-id="${esc(s.sessionId)}">
     <div class="top">
       <span class="name" title="${esc(s.name)}">${esc(s.name || s.sessionId)}</span>
       ${badge(status)}
-      <span class="since" title="time in current status">${ago(s.statusUpdatedAt, now)}</span>
+      <span class="since" title="time in current status">${ago(s.waiting ? s.waiting.since : s.statusUpdatedAt, now)}</span>
     </div>
     <div class="meta">${esc(home(s.cwd))}${s.branch ? ` <span class="br">⎇ ${esc(s.branch)}</span>` : ""}</div>
+    ${waitBox(s)}
     ${s.title ? `<div class="title">${esc(s.title)}</div>` : ""}
     ${rows}
     <div class="foot">
@@ -183,7 +200,7 @@ function md(text) {
 const hhmm = ts => ts ? `<span class="ts">${new Date(ts).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"})}</span>` : "";
 
 function headHtml(s) {
-  const status = s.status || "unknown";
+  const status = effStatus(s);
   return `<div class="top">
       <span class="name">${esc(s.name || s.sessionId)}</span>
       ${badge(status)}
@@ -191,6 +208,7 @@ function headHtml(s) {
       <button class="d-close" aria-label="Close" onclick="closeDetail()">×</button>
     </div>
     <div class="meta">${esc(home(s.cwd))}${s.branch ? ` <span class="br">⎇ ${esc(s.branch)}</span>` : ""} · ${esc(s.sessionId)}</div>
+    ${waitBox(s)}
     ${s.title ? `<div class="title">${esc(s.title)}</div>` : ""}`;
 }
 
@@ -262,16 +280,19 @@ async function refresh() {
     const r = await fetch("/api/sessions", {cache: "no-store"});
     const {now, sessions} = await r.json();
     latest = Object.fromEntries(sessions.map(s => [s.sessionId, s]));
-    const rank = s => isWorking(s) ? 0 : 1;
+    const rank = s => s.waiting ? 0 : isWorking(s) ? 1 : 2;
     sessions.sort((a, b) => rank(a) - rank(b) || (b.statusUpdatedAt || 0) - (a.statusUpdatedAt || 0));
     const busy = sessions.filter(isWorking).length;
+    const waiting = sessions.filter(s => s.waiting).length;
     document.getElementById("counts").innerHTML =
-      `<b>${sessions.length}</b> running · <b>${busy}</b> working · <b>${sessions.length - busy}</b> idle`;
+      `<b>${sessions.length}</b> running · ` +
+      (waiting ? `<b style="color:var(--wait)">${waiting}</b> need you · ` : "") +
+      `<b>${busy}</b> working · <b>${sessions.length - busy - waiting}</b> idle`;
     document.getElementById("grid").innerHTML = sessions.length
       ? sessions.map(s => card(s, now)).join("")
       : `<div class="empty">No running Claude Code sessions.</div>`;
     document.getElementById("updated").textContent = "updated " + new Date().toLocaleTimeString();
-    document.title = busy ? `(${busy}) Claude Sessions` : "Claude Sessions";
+    document.title = waiting ? `(${waiting}!) Claude Sessions` : busy ? `(${busy}) Claude Sessions` : "Claude Sessions";
   } catch (e) {
     document.getElementById("updated").textContent = "server unreachable";
   }

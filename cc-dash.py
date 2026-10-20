@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlparse
 CLAUDE_DIR = os.path.expanduser("~/.claude")
 SESSIONS_DIR = os.path.join(CLAUDE_DIR, "sessions")
 PROJECTS_DIR = os.path.join(CLAUDE_DIR, "projects")
+HOOK_STATE_DIR = os.path.join(CLAUDE_DIR, "cc-dash", "state")  # written by hook.py
 TAIL_BYTES = 512 * 1024
 DETAIL_TAIL_BYTES = 4 * 1024 * 1024
 DETAIL_MAX_ITEMS = 150
@@ -229,6 +230,22 @@ def session_timeline(session_id):
     return {"sessionId": session_id, "items": items[-DETAIL_MAX_ITEMS:]}
 
 
+def waiting_state(session_id, status, status_updated_at):
+    """What the session waits on (permission / question), from hook.py's state file."""
+    if not session_id or not SESSION_ID_RE.match(session_id):
+        return None
+    try:
+        with open(os.path.join(HOOK_STATE_DIR, f"{session_id}.json")) as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        return None
+    since = state.get("since") or 0
+    # Turn ended after the wait began (e.g. Esc on the prompt, which fires no clearing hook).
+    if status in ("idle", "shell") and (status_updated_at or 0) > since:
+        return None
+    return state
+
+
 def collect_sessions():
     sessions = []
     for path in glob.glob(os.path.join(SESSIONS_DIR, "*.json")):
@@ -258,6 +275,7 @@ def collect_sessions():
         }
         if transcript:
             s.update(parse_transcript(transcript))
+        s["waiting"] = waiting_state(s["sessionId"], s["status"], s["statusUpdatedAt"])
         sessions.append(s)
     return sessions
 

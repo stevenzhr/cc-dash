@@ -27,7 +27,24 @@ No dependencies beyond the Python 3 standard library. Binds to `127.0.0.1` only,
 
 Both Claude Code files are internal and undocumented; fields may change across versions, so parsing is tolerant and missing fields render empty.
 
+## Hooks: "needs approval" / "has a question"
+
+The session registry only says busy/idle. `hook.py` fills the gap: Claude Code runs it on hook events and it keeps `~/.claude/cc-dash/state/<sessionId>.json` while a session waits on you.
+
+| Event | Effect |
+|---|---|
+| `PermissionRequest`, `Notification` (`permission_prompt`) | waiting: permission (tool + description) |
+| `PreToolUse` on `AskUserQuestion`, `Notification` (`elicitation_dialog`) | waiting: question |
+| `PostToolUse`, `PostToolUseFailure`, `PermissionDenied`, `UserPromptSubmit`, `Stop`, `SessionEnd` | cleared |
+
+Such sessions get a red badge, sort first, and the tab title shows `(N!)`. A state older than the session's last switch to idle is ignored, which covers pressing Esc on a prompt.
+
+Install: add this to `hooks` in `~/.claude/settings.json` for each event above (`"matcher": "AskUserQuestion"` on `PreToolUse`). `async` keeps it off the critical path; the script always exits 0.
+
+```json
+{ "hooks": [{ "type": "command", "command": "python3 -I /path/to/cc-dash/hook.py", "async": true, "timeout": 5 }] }
+```
+
 ## Next ideas
 
-- Hooks (`UserPromptSubmit` / `PreToolUse` / `Stop` / `Notification`) posting events, to show "waiting for permission" precisely
 - Click a card to focus that terminal tab

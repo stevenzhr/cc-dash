@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Sessions</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --card: #ffffff; --fg: #1f1e1c; --muted: #6b6862; --line: #e4e1da;
+    --busy: #d97706; --busy-bg: #fef3e2; --idle: #6b7280; --idle-bg: #f0efec;
+    --tool: #2563eb; --accent: #c2410c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161614; --card: #201f1d; --fg: #ecebe7; --muted: #9c988f; --line: #33312d;
+      --busy: #f59e0b; --busy-bg: #3a2a10; --idle: #9ca3af; --idle-bg: #2a2926;
+      --tool: #60a5fa; --accent: #fb923c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #161614; --card: #201f1d; --fg: #ecebe7; --muted: #9c988f; --line: #33312d;
+    --busy: #f59e0b; --busy-bg: #3a2a10; --idle: #9ca3af; --idle-bg: #2a2926;
+    --tool: #60a5fa; --accent: #fb923c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+    padding: 20px 16px 8px; max-width: 1400px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0; }
+  .counts { color: var(--muted); }
+  .counts b { color: var(--fg); }
+  .updated { margin-left: auto; color: var(--muted); font-size: 12px; }
+  main { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 12px; padding: 8px 16px 32px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 420px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .card.busy { border-left: 4px solid var(--busy); }
+  .top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .name { font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px;
+    text-transform: uppercase; letter-spacing: .03em; flex-shrink: 0; }
+  .badge.busy { color: var(--busy); background: var(--busy-bg); }
+  .badge.idle, .badge.unknown { color: var(--idle); background: var(--idle-bg); }
+  .since { margin-left: auto; color: var(--muted); font-size: 12px; flex-shrink: 0; }
+  .meta { color: var(--muted); font-size: 12px; font-family: ui-monospace, Menlo, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta .br { color: var(--accent); }
+  .title { font-size: 13px; }
+  .row { font-size: 13px; display: grid; grid-template-columns: 52px 1fr; gap: 6px; }
+  .row .k { color: var(--muted); font-size: 11px; text-transform: uppercase; padding-top: 2px; }
+  .row .v { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    white-space: pre-wrap; word-break: break-word; }
+  .tool { color: var(--tool); font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .tool .running::before { content: "● "; animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .2; } }
+  a { color: var(--tool); }
+  .foot { display: flex; gap: 12px; color: var(--muted); font-size: 11px; margin-top: auto; }
+  .empty { color: var(--muted); padding: 40px 16px; text-align: center; grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Claude Sessions</h1>
+  <span class="counts" id="counts"></span>
+  <span class="updated" id="updated"></span>
+</header>
+<main id="grid"></main>
+<script>
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const home = s => (s || "").replace(/^\/Users\/[^/]+/, "~");
+function ago(ms, now) {
+  if (!ms) return "";
+  const s = Math.max(0, Math.round((now - ms) / 1000));
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m";
+  if (s < 86400) return Math.floor(s / 3600) + "h " + Math.floor(s % 3600 / 60) + "m";
+  return Math.floor(s / 86400) + "d";
+}
+
+function card(s, now) {
+  const status = s.status || "unknown";
+  const tool = s.lastTool
+    ? `<span class="${s.toolPending && status === "busy" ? "running" : ""}">${esc(s.lastTool.name)}</span>` +
+      (s.lastTool.detail ? ` · ${esc(s.lastTool.detail)}` : "")
+    : "";
+  const rows = [
+    ["prompt", s.lastPrompt && esc(s.lastPrompt)],
+    ["tool", tool && `<span class="tool">${tool}</span>`],
+    ["reply", s.lastReply && esc(s.lastReply)],
+  ].filter(r => r[1]).map(([k, v]) => `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join("");
+  return `<div class="card ${esc(status)}">
+    <div class="top">
+      <span class="name" title="${esc(s.name)}">${esc(s.name || s.sessionId)}</span>
+      <span class="badge ${esc(status)}">${esc(status)}</span>
+      <span class="since" title="time in current status">${ago(s.statusUpdatedAt, now)}</span>
+    </div>
+    <div class="meta">${esc(home(s.cwd))}${s.branch ? ` <span class="br">⎇ ${esc(s.branch)}</span>` : ""}</div>
+    ${s.title ? `<div class="title">${esc(s.title)}</div>` : ""}
+    ${rows}
+    <div class="foot">
+      <span>pid ${esc(s.pid)}</span>
+      ${s.version ? `<span>v${esc(s.version)}</span>` : ""}
+      ${s.mode && s.mode !== "default" ? `<span>${esc(s.mode)}</span>` : ""}
+      ${s.pr ? `<a href="${esc(s.pr.url)}" target="_blank" rel="noopener">PR #${esc(s.pr.number ?? "")}</a>` : ""}
+      <span style="margin-left:auto">up ${ago(s.startedAt, now)}</span>
+    </div>
+  </div>`;
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("/api/sessions", {cache: "no-store"});
+    const {now, sessions} = await r.json();
+    const rank = s => s.status === "busy" ? 0 : 1;
+    sessions.sort((a, b) => rank(a) - rank(b) || (b.statusUpdatedAt || 0) - (a.statusUpdatedAt || 0));
+    const busy = sessions.filter(s => s.status === "busy").length;
+    document.getElementById("counts").innerHTML =
+      `<b>${sessions.length}</b> running · <b>${busy}</b> busy · <b>${sessions.length - busy}</b> idle`;
+    document.getElementById("grid").innerHTML = sessions.length
+      ? sessions.map(s => card(s, now)).join("")
+      : `<div class="empty">No running Claude Code sessions.</div>`;
+    document.getElementById("updated").textContent = "updated " + new Date().toLocaleTimeString();
+    document.title = busy ? `(${busy}) Claude Sessions` : "Claude Sessions";
+  } catch (e) {
+    document.getElementById("updated").textContent = "server unreachable";
+  }
+}
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

@@ -45,6 +45,7 @@
     text-transform: uppercase; letter-spacing: .03em; flex-shrink: 0; }
   .badge.busy { color: var(--busy); background: var(--busy-bg); }
   .badge.idle, .badge.unknown { color: var(--idle); background: var(--idle-bg); }
+  .badge.shell { color: var(--tool); background: var(--idle-bg); }
   .since { margin-left: auto; color: var(--muted); font-size: 12px; flex-shrink: 0; }
   .meta { color: var(--muted); font-size: 12px; font-family: ui-monospace, Menlo, monospace;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -130,6 +131,18 @@ function ago(ms, now) {
   return Math.floor(s / 86400) + "d";
 }
 
+// Registry status -> label / tooltip. Raw values are undocumented; unknown ones show as-is.
+const STATUS = {
+  busy: ["working", "Claude is working on a turn"],
+  idle: ["idle", "Waiting for your input"],
+  shell: ["idle · bg shell", "Turn finished, waiting for your input; a background shell is still running"],
+};
+const isWorking = s => s.status === "busy";
+function badge(status) {
+  const [label, tip] = STATUS[status] || [status, `status: ${status}`];
+  return `<span class="badge ${esc(status)}" title="${esc(tip)} (status: ${esc(status)})">${esc(label)}</span>`;
+}
+
 function card(s, now) {
   const status = s.status || "unknown";
   const tool = s.lastTool
@@ -144,7 +157,7 @@ function card(s, now) {
   return `<div class="card ${esc(status)}" tabindex="0" role="button" data-id="${esc(s.sessionId)}">
     <div class="top">
       <span class="name" title="${esc(s.name)}">${esc(s.name || s.sessionId)}</span>
-      <span class="badge ${esc(status)}">${esc(status)}</span>
+      ${badge(status)}
       <span class="since" title="time in current status">${ago(s.statusUpdatedAt, now)}</span>
     </div>
     <div class="meta">${esc(home(s.cwd))}${s.branch ? ` <span class="br">⎇ ${esc(s.branch)}</span>` : ""}</div>
@@ -173,7 +186,7 @@ function headHtml(s) {
   const status = s.status || "unknown";
   return `<div class="top">
       <span class="name">${esc(s.name || s.sessionId)}</span>
-      <span class="badge ${esc(status)}">${esc(status)}</span>
+      ${badge(status)}
       <span class="since">${s.statusUpdatedAt ? ago(s.statusUpdatedAt, Date.now()) : ""}</span>
       <button class="d-close" aria-label="Close" onclick="closeDetail()">×</button>
     </div>
@@ -249,11 +262,11 @@ async function refresh() {
     const r = await fetch("/api/sessions", {cache: "no-store"});
     const {now, sessions} = await r.json();
     latest = Object.fromEntries(sessions.map(s => [s.sessionId, s]));
-    const rank = s => s.status === "busy" ? 0 : 1;
+    const rank = s => isWorking(s) ? 0 : 1;
     sessions.sort((a, b) => rank(a) - rank(b) || (b.statusUpdatedAt || 0) - (a.statusUpdatedAt || 0));
-    const busy = sessions.filter(s => s.status === "busy").length;
+    const busy = sessions.filter(isWorking).length;
     document.getElementById("counts").innerHTML =
-      `<b>${sessions.length}</b> running · <b>${busy}</b> busy · <b>${sessions.length - busy}</b> idle`;
+      `<b>${sessions.length}</b> running · <b>${busy}</b> working · <b>${sessions.length - busy}</b> waiting for you`;
     document.getElementById("grid").innerHTML = sessions.length
       ? sessions.map(s => card(s, now)).join("")
       : `<div class="empty">No running Claude Code sessions.</div>`;

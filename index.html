@@ -266,7 +266,7 @@ async function refresh() {
     sessions.sort((a, b) => rank(a) - rank(b) || (b.statusUpdatedAt || 0) - (a.statusUpdatedAt || 0));
     const busy = sessions.filter(isWorking).length;
     document.getElementById("counts").innerHTML =
-      `<b>${sessions.length}</b> running · <b>${busy}</b> working · <b>${sessions.length - busy}</b> waiting for you`;
+      `<b>${sessions.length}</b> running · <b>${busy}</b> working · <b>${sessions.length - busy}</b> idle`;
     document.getElementById("grid").innerHTML = sessions.length
       ? sessions.map(s => card(s, now)).join("")
       : `<div class="empty">No running Claude Code sessions.</div>`;

@@ -45,6 +45,12 @@ Install: add this to `hooks` in `~/.claude/settings.json` for each event above (
 { "hooks": [{ "type": "command", "command": "python3 -I /path/to/cc-dash/hook.py", "async": true, "timeout": 5 }] }
 ```
 
+## Jump to the terminal
+
+Click a card's green `CLI` tag to bring that session's iTerm2 tab to the front. The server checks the pid is a live CLI session, looks up its tty with `ps`, and has `osascript` select the iTerm2 tab and pane on that tty (the tty is passed as an argument, not spliced into the script). Requests need an `X-CC-Dash: 1` header, which other sites cannot send.
+
+iTerm2 only for now. A session in Terminal.app, tmux or an editor terminal reports "no iTerm2 tab found". macOS may ask once to let the process control iTerm2.
+
 ## Next ideas
 
-- Click a card to focus that terminal tab
+- `Desktop` tag: activate Claude Desktop, ideally on that session via a `claude://` link (unverified)

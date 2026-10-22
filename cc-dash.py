@@ -303,7 +303,82 @@ def collect_sessions():
     return sessions
 
 
+# Select the iTerm2 tab/pane whose tty matches, bring its window to the front.
+# The tty arrives as argv, never spliced into the script.
+ITERM_FOCUS_SCRIPT = """
+on run argv
+  set target to item 1 of argv
+  if application id "com.googlecode.iterm2" is not running then return "notfound"
+  tell application id "com.googlecode.iterm2"
+    repeat with w in windows
+      repeat with t in tabs of w
+        repeat with s in sessions of t
+          if tty of s is target then
+            try
+              set miniaturized of w to false
+            end try
+            select w
+            tell t to select
+            tell s to select
+            activate
+            return "ok"
+          end if
+        end repeat
+      end repeat
+    end repeat
+  end tell
+  return "notfound"
+end run
+"""
+
+
+def focus_terminal(pid):
+    """Bring the iTerm2 tab running CLI session `pid` to the front. Returns (ok, message)."""
+    try:
+        pid = int(pid)
+        with open(os.path.join(SESSIONS_DIR, f"{pid}.json")) as f:
+            reg = json.load(f)
+    except (TypeError, ValueError, OSError):
+        return False, "unknown session"
+    if reg.get("pid") != pid or not pid_alive(pid):
+        return False, "session is not running"
+    if reg.get("entrypoint") != "cli":
+        return False, "not a terminal session"
+    tty = subprocess.run(["ps", "-o", "tty=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    if not tty or tty == "??":
+        return False, "session has no terminal"
+    try:
+        out = subprocess.run(
+            ["osascript", "-e", ITERM_FOCUS_SCRIPT, f"/dev/{tty}"],
+            capture_output=True, text=True, timeout=60,  # first run may wait on the macOS Automation prompt
+        )
+    except subprocess.TimeoutExpired:
+        return False, "timed out (macOS Automation permission prompt?)"
+    if out.returncode != 0:
+        return False, out.stderr.strip() or "osascript failed"
+    if out.stdout.strip() != "ok":
+        return False, "no iTerm2 tab found for this session"
+    return True, "ok"
+
+
 class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        # Custom header: a cross-site page cannot send it without a CORS preflight, which we never answer.
+        if urlparse(self.path).path != "/api/focus" or self.headers.get("X-CC-Dash") != "1":
+            self.send_error(404)
+            return
+        try:
+            req = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 4096)) or b"{}")
+        except ValueError:
+            req = {}
+        ok, msg = focus_terminal(req.get("pid") if isinstance(req, dict) else None)
+        body = json.dumps({"ok": ok, "message": msg}).encode()
+        self.send_response(200 if ok else 409)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         url = urlparse(self.path)
         if url.path == "/api/sessions":

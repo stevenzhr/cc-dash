@@ -68,6 +68,13 @@
   .src { border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-weight: 600;
     letter-spacing: .03em; color: var(--muted); }
   .src.cli { color: var(--term); border-color: var(--term); }
+  button.src { font: inherit; background: none; cursor: pointer; }
+  button.src:hover { background: var(--idle-bg); }
+  #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 10;
+    background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 14px; font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,.25); max-width: calc(100vw - 32px); }
+  #toast.err { color: var(--wait); border-color: var(--wait); }
+  #toast[hidden] { display: none; }
   .src.desktop { color: var(--claude); border-color: var(--claude); }
   .card { cursor: pointer; transition: border-color .15s, transform .15s; }
   .card:hover { border-color: var(--muted); }
@@ -124,6 +131,7 @@
   <span class="updated" id="updated"></span>
 </header>
 <main id="grid"></main>
+<div id="toast" hidden role="status"></div>
 <dialog id="detail">
   <div class="d-head" id="d-head"></div>
   <div class="d-body" id="d-body"></div>
@@ -152,10 +160,30 @@ const WAIT = {
 };
 // Registry "entrypoint" -> footer tag. Unknown values show as-is.
 const SOURCE = {cli: ["CLI", "Started from a terminal"], "claude-desktop": ["Desktop", "Started from Claude Desktop"]};
-function sourceTag(ep) {
+function sourceTag(ep, pid) {
   if (!ep) return "";
   const [label, tip] = SOURCE[ep] || [ep, `entrypoint: ${ep}`];
-  return `<span class="src ${ep === "claude-desktop" ? "desktop" : ep === "cli" ? "cli" : ""}" title="${esc(tip)}">${esc(label)}</span>`;
+  if (ep === "cli") {  // clickable: bring its iTerm2 tab to the front
+    return `<button class="src cli" data-focus-pid="${esc(pid)}" title="${esc(tip)} · click to bring its iTerm2 tab to the front">${esc(label)}</button>`;
+  }
+  return `<span class="src ${ep === "claude-desktop" ? "desktop" : ""}" title="${esc(tip)}">${esc(label)}</span>`;
+}
+
+let toastTimer;
+function toast(msg, isErr) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.className = isErr ? "err" : ""; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, isErr ? 4000 : 1500);
+}
+async function focusTerminal(pid) {
+  try {
+    const r = await fetch("/api/focus", {method: "POST", headers: {"Content-Type": "application/json", "X-CC-Dash": "1"},
+      body: JSON.stringify({pid: Number(pid)})});
+    const {ok, message} = await r.json();
+    ok ? toast("Switched to iTerm2") : toast(`Could not switch: ${message}`, true);
+  } catch (e) {
+    toast("Could not switch: server unreachable", true);
+  }
 }
 const isWorking = s => s.status === "busy" && !s.waiting;
 const effStatus = s => s.waiting ? s.waiting.waiting : (s.status || "unknown");
@@ -192,7 +220,7 @@ function card(s, now) {
     ${s.title ? `<div class="title">${esc(s.title)}</div>` : ""}
     ${rows}
     <div class="foot">
-      ${sourceTag(s.entrypoint)}
+      ${sourceTag(s.entrypoint, s.pid)}
       <span>pid ${esc(s.pid)}</span>
       ${s.version ? `<span>v${esc(s.version)}</span>` : ""}
       ${s.pr ? `<a href="${esc(s.pr.url)}" target="_blank" rel="noopener">PR #${esc(s.pr.number ?? "")}</a>` : ""}
@@ -277,11 +305,14 @@ dlg.addEventListener("close", () => { detailId = null; history.replaceState(null
 dlg.addEventListener("click", e => { if (e.target === dlg) closeDetail(); });  // backdrop
 const grid = document.getElementById("grid");
 grid.addEventListener("click", e => {
+  const f = e.target.closest("[data-focus-pid]");
+  if (f) { e.stopPropagation(); focusTerminal(f.dataset.focusPid); return; }
   if (e.target.closest("a")) return;
   const c = e.target.closest(".card");
   if (c && c.dataset.id) openDetail(c.dataset.id);
 });
 grid.addEventListener("keydown", e => {
+  if (e.target.closest("[data-focus-pid]")) return;  // the button handles its own Enter/Space
   const c = e.target.closest(".card");
   if (c && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openDetail(c.dataset.id); }
 });

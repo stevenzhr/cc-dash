@@ -303,8 +303,9 @@ def collect_sessions():
     return sessions
 
 
-# Select the iTerm2 tab/pane whose tty matches, bring its window to the front.
-# The tty arrives as argv, never spliced into the script.
+# Per terminal app: select the tab (and pane) whose tty matches, bring its window to the
+# front. The tty arrives as argv, never spliced into the script. An app that is not
+# running is skipped so the lookup never launches it.
 ITERM_FOCUS_SCRIPT = """
 on run argv
   set target to item 1 of argv
@@ -331,9 +332,34 @@ on run argv
 end run
 """
 
+TERMINAL_FOCUS_SCRIPT = """
+on run argv
+  set target to item 1 of argv
+  if application id "com.apple.Terminal" is not running then return "notfound"
+  tell application id "com.apple.Terminal"
+    repeat with w in windows
+      repeat with t in tabs of w
+        if tty of t is target then
+          try
+            set miniaturized of w to false
+          end try
+          set selected of t to true
+          set index of w to 1
+          activate
+          return "ok"
+        end if
+      end repeat
+    end repeat
+  end tell
+  return "notfound"
+end run
+"""
+
+TERMINAL_APPS = [("iTerm2", ITERM_FOCUS_SCRIPT), ("Terminal", TERMINAL_FOCUS_SCRIPT)]
+
 
 def focus_terminal(pid):
-    """Bring the iTerm2 tab running CLI session `pid` to the front. Returns (ok, message)."""
+    """Bring the terminal tab running CLI session `pid` to the front. Returns (ok, message)."""
     try:
         pid = int(pid)
         with open(os.path.join(SESSIONS_DIR, f"{pid}.json")) as f:
@@ -347,18 +373,21 @@ def focus_terminal(pid):
     tty = subprocess.run(["ps", "-o", "tty=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
     if not tty or tty == "??":
         return False, "session has no terminal"
-    try:
-        out = subprocess.run(
-            ["osascript", "-e", ITERM_FOCUS_SCRIPT, f"/dev/{tty}"],
-            capture_output=True, text=True, timeout=60,  # first run may wait on the macOS Automation prompt
-        )
-    except subprocess.TimeoutExpired:
-        return False, "timed out (macOS Automation permission prompt?)"
-    if out.returncode != 0:
-        return False, out.stderr.strip() or "osascript failed"
-    if out.stdout.strip() != "ok":
-        return False, "no iTerm2 tab found for this session"
-    return True, "ok"
+    errors = []
+    for app, script in TERMINAL_APPS:  # ttys are unique, so the first match is the one
+        try:
+            out = subprocess.run(
+                ["osascript", "-e", script, f"/dev/{tty}"],
+                capture_output=True, text=True, timeout=60,  # first run may wait on the macOS Automation prompt
+            )
+        except subprocess.TimeoutExpired:
+            errors.append(f"{app}: timed out (macOS Automation permission prompt?)")
+            continue
+        if out.returncode != 0:
+            errors.append(f"{app}: {out.stderr.strip() or 'osascript failed'}")
+        elif out.stdout.strip() == "ok":
+            return True, app
+    return False, "; ".join(errors) or "no iTerm2 or Terminal tab found for this session"
 
 
 class Handler(BaseHTTPRequestHandler):

@@ -164,7 +164,7 @@ function sourceTag(ep, pid) {
   if (!ep) return "";
   const [label, tip] = SOURCE[ep] || [ep, `entrypoint: ${ep}`];
   if (ep === "cli") {  // clickable: bring its iTerm2 tab to the front
-    return `<button class="src cli" data-focus-pid="${esc(pid)}" title="${esc(tip)} · click to bring its iTerm2 tab to the front">${esc(label)}</button>`;
+    return `<button class="src cli" data-focus-pid="${esc(pid)}" title="${esc(tip)} · click to bring its terminal tab to the front">${esc(label)}</button>`;
   }
   return `<span class="src ${ep === "claude-desktop" ? "desktop" : ""}" title="${esc(tip)}">${esc(label)}</span>`;
 }
@@ -180,7 +180,7 @@ async function focusTerminal(pid) {
     const r = await fetch("/api/focus", {method: "POST", headers: {"Content-Type": "application/json", "X-CC-Dash": "1"},
       body: JSON.stringify({pid: Number(pid)})});
     const {ok, message} = await r.json();
-    ok ? toast("Switched to iTerm2") : toast(`Could not switch: ${message}`, true);
+    ok ? toast(`Switched to ${message}`) : toast(`Could not switch: ${message}`, true);
   } catch (e) {
     toast("Could not switch: server unreachable", true);
   }

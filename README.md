@@ -12,7 +12,9 @@ No dependencies beyond the Python 3 standard library. Binds to `127.0.0.1` only,
 ## Usage
 
 - Cards refresh every 2 s; busy sessions sort first.
-- Click a card (or Enter) to open its detail: the recent main-thread conversation with prompts and replies rendered as Markdown, and tool calls as expandable input/result blocks. The detail refreshes every 3 s and follows the bottom while you are there.
+- Click a card (or Enter) to open its detail: the main-thread conversation with prompts and replies rendered as Markdown, and tool calls as expandable input/result blocks. It shows the last 150 items; "Show N earlier" at the top loads the whole session. The detail checks for changes every 3 s (ETag, so an unchanged transcript costs a `stat`) and follows the bottom while you are there.
+- Images pasted into a prompt show as thumbnails under it; click one to open it full size. They are served by `/api/image` straight from the transcript.
+- A compaction summary shows as a collapsed "Compacted context" block instead of a prompt, and is never used as a card's PROMPT.
 - `#s=<sessionId>` in the URL deep-links to a session's detail.
 - Markdown uses marked + DOMPurify from cdnjs; offline it falls back to plain text.
 
@@ -22,7 +24,7 @@ No dependencies beyond the Python 3 standard library. Binds to `127.0.0.1` only,
 |---|---|
 | `~/.claude/sessions/<pid>.json` | Live session registry: name, cwd, `busy`/`idle` status, start time, version, `entrypoint` (CLI / Desktop tag). Entries whose pid is gone are skipped. |
 | `~/.claude/projects/*/<sessionId>.jsonl` (last 512 KB) | AI title, last prompt, last tool call (and whether it is still running), last reply, PR link |
-| Same transcript, last 4 MB (detail view) | Last 150 prompts / replies / tool calls; tool input and output clipped to 4000 chars |
+| Same transcript, whole file (detail view) | Prompts, replies, tool calls (input and output clipped to 4000 chars), pasted images, compaction summaries |
 | `git -C <cwd> branch --show-current` | Branch, cached 30 s |
 
 Both Claude Code files are internal and undocumented; fields may change across versions, so parsing is tolerant and missing fields render empty.

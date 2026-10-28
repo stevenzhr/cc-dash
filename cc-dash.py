@@ -8,6 +8,7 @@ undocumented Claude Code files, so every field is read defensively.
 Usage: python3 cc-dash.py [--port 7777]
 """
 import argparse
+import base64
 import glob
 import json
 import os
@@ -22,10 +23,10 @@ SESSIONS_DIR = os.path.join(CLAUDE_DIR, "sessions")
 PROJECTS_DIR = os.path.join(CLAUDE_DIR, "projects")
 HOOK_STATE_DIR = os.path.join(CLAUDE_DIR, "cc-dash", "state")  # written by hook.py
 TAIL_BYTES = 512 * 1024
-DETAIL_TAIL_BYTES = 4 * 1024 * 1024
-DETAIL_MAX_ITEMS = 150
+DETAIL_MAX_ITEMS = 150  # shown by default; the page can ask for the full session
 TOOL_TEXT_LIMIT = 4000
 SESSION_ID_RE = re.compile(r"^[0-9a-fA-F-]{8,64}$")
+IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
 BRANCH_TTL = 30  # seconds
 
@@ -69,9 +70,12 @@ def find_transcript(session_id):
 
 
 def tail_lines(path, nbytes=TAIL_BYTES):
+    """Parsed JSON lines from the last nbytes of path (the whole file if nbytes is None)."""
     with open(path, "rb") as f:
         f.seek(0, os.SEEK_END)
         size = f.tell()
+        if nbytes is None:
+            nbytes = size
         f.seek(max(0, size - nbytes))
         data = f.read()
     lines = data.split(b"\n")
@@ -109,7 +113,7 @@ def first_text(content):
 def prompt_text(e):
     """Text of a real user prompt, or None for tool results, meta entries, slash
     commands and notifications (<command-name>, <local-command-stdout>, <task-notification>)."""
-    if e.get("type") != "user" or e.get("isMeta") or e.get("isSidechain"):
+    if e.get("type") != "user" or e.get("isMeta") or e.get("isSidechain") or e.get("isCompactSummary"):
         return None
     content = (e.get("message") or {}).get("content")
     if isinstance(content, list) and any(
@@ -208,15 +212,23 @@ def user_text(content):
     return REMINDER_RE.sub("", text).strip()
 
 
-def session_timeline(session_id):
-    """Recent main-thread conversation: prompts, replies, tool calls with results."""
+def image_count(content):
+    if not isinstance(content, list):
+        return 0
+    return sum(1 for b in content if isinstance(b, dict) and b.get("type") == "image")
+
+
+def transcript_for(session_id):
     if not session_id or not SESSION_ID_RE.match(session_id):
         return None
-    path = find_transcript(session_id)
-    if not path:
-        return None
+    return find_transcript(session_id)
+
+
+def session_timeline(session_id, path, full=False):
+    """Main-thread conversation: prompts, replies, tool calls with results.
+    The last DETAIL_MAX_ITEMS items unless full; "total" counts them all."""
     items, tools = [], {}
-    for e in tail_lines(path, DETAIL_TAIL_BYTES):
+    for e in tail_lines(path, None):
         if not isinstance(e, dict) or e.get("isSidechain") or e.get("type") not in ("user", "assistant"):
             continue
         ts = e.get("timestamp")
@@ -246,10 +258,50 @@ def session_timeline(session_id):
                 if item is not None:
                     item["result"] = clip(tool_result_text(r.get("content")))
                     item["isError"] = bool(r.get("is_error"))
+            if e.get("isCompactSummary"):
+                items.append({"kind": "compact", "text": user_text(content), "ts": ts})
+                continue
             text = prompt_text(e)
-            if text:
-                items.append({"kind": "prompt", "text": text, "ts": ts})
-    return {"sessionId": session_id, "items": items[-DETAIL_MAX_ITEMS:]}
+            n_images = image_count(content) if not results and not e.get("isMeta") else 0
+            if text or (n_images and e.get("uuid")):
+                item = {"kind": "prompt", "text": text or "", "ts": ts}
+                if n_images and e.get("uuid"):
+                    item["images"] = {"uuid": e["uuid"], "count": n_images}
+                items.append(item)
+    return {"sessionId": session_id, "items": items if full else items[-DETAIL_MAX_ITEMS:], "total": len(items)}
+
+
+def session_image(session_id, uuid, index):
+    """(media_type, bytes) of the index-th image pasted into the given user message."""
+    if not (uuid and SESSION_ID_RE.match(uuid)):
+        return None
+    path = transcript_for(session_id)
+    if not path:
+        return None
+    needle = f'"uuid":"{uuid}"'.encode()
+    with open(path, "rb") as f:
+        for raw in f:
+            if needle not in raw:
+                continue
+            try:
+                e = json.loads(raw)
+            except ValueError:
+                continue
+            if e.get("uuid") != uuid or e.get("type") != "user":
+                continue
+            content = (e.get("message") or {}).get("content")
+            images = [b for b in content if isinstance(b, dict) and b.get("type") == "image"] \
+                if isinstance(content, list) else []
+            if not 0 <= index < len(images):
+                return None
+            src = images[index].get("source") or {}
+            if src.get("type") != "base64" or src.get("media_type") not in IMAGE_TYPES:
+                return None
+            try:
+                return src["media_type"], base64.b64decode(src.get("data") or "")
+            except ValueError:
+                return None
+    return None
 
 
 def waiting_state(session_id, status, status_updated_at):
@@ -414,12 +466,44 @@ class Handler(BaseHTTPRequestHandler):
             body = json.dumps({"now": time.time() * 1000, "sessions": collect_sessions()}).encode()
             ctype = "application/json"
         elif url.path == "/api/session":
-            timeline = session_timeline((parse_qs(url.query).get("id") or [None])[0])
-            if timeline is None:
+            q = parse_qs(url.query)
+            session_id, full = (q.get("id") or [None])[0], q.get("full") == ["1"]
+            path = transcript_for(session_id)
+            try:
+                st = os.stat(path) if path else None
+            except OSError:
+                st = None
+            if st is None:
                 self.send_error(404)
                 return
-            body = json.dumps(timeline, ensure_ascii=False).encode()
+            # The page polls every 3 s; skip parsing and sending when the transcript is unchanged.
+            etag = f'"{st.st_mtime_ns}-{st.st_size}-{int(full)}"'
+            if self.headers.get("If-None-Match") == etag:
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.end_headers()
+                return
+            body = json.dumps(session_timeline(session_id, path, full), ensure_ascii=False).encode()
             ctype = "application/json; charset=utf-8"
+        elif url.path == "/api/image":
+            q = parse_qs(url.query)
+            try:
+                index = int((q.get("i") or ["0"])[0])
+            except ValueError:
+                index = -1
+            image = session_image((q.get("id") or [None])[0], (q.get("uuid") or [None])[0], index)
+            if image is None:
+                self.send_error(404)
+                return
+            ctype, body = image
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Cache-Control", "private, max-age=86400")  # a message's images never change
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         elif url.path in ("/", "/index.html"):
             with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html"), "rb") as f:
                 body = f.read()
@@ -430,6 +514,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Cache-Control", "no-store")
+        if url.path == "/api/session":
+            self.send_header("ETag", etag)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

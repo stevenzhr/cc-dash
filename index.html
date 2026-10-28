@@ -120,6 +120,15 @@
   details.tc pre { margin: 0; padding: 8px 10px; border-top: 1px solid var(--line); white-space: pre-wrap;
     word-break: break-word; font-family: ui-monospace, Menlo, monospace; font-size: 12px; max-height: 360px; overflow-y: auto; }
   details.tc .lbl { padding: 6px 10px 0; color: var(--muted); font-size: 11px; text-transform: uppercase; }
+  .shots { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .shots a { display: block; line-height: 0; }
+  .shots img { max-width: 240px; max-height: 160px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); }
+  details.compact { font-size: 13px; border: 1px dashed var(--line); border-radius: 8px; }
+  details.compact summary { cursor: pointer; padding: 6px 10px; color: var(--muted); font-size: 12px; }
+  details.compact .md { padding: 4px 14px 10px; border-top: 1px dashed var(--line); }
+  .more { align-self: center; background: var(--card); border: 1px solid var(--line); border-radius: 999px;
+    color: var(--muted); font: inherit; font-size: 12px; padding: 4px 14px; cursor: pointer; }
+  .more:hover { color: var(--fg); }
   .ts { color: var(--muted); font-size: 11px; font-weight: normal; text-transform: none; margin-left: 6px; }
   .empty { color: var(--muted); padding: 40px 16px; text-align: center; grid-column: 1 / -1; }
 </style>
@@ -252,8 +261,19 @@ function headHtml(s) {
     ${s.title ? `<div class="title">${esc(s.title)}</div>` : ""}`;
 }
 
+function shotsHtml(img) {
+  if (!img) return "";
+  const shots = Array.from({length: img.count}, (_, n) => {
+    const src = `/api/image?id=${encodeURIComponent(detailId)}&uuid=${encodeURIComponent(img.uuid)}&i=${n}`;
+    return `<a href="${src}" target="_blank" rel="noopener"><img src="${src}" alt="Image #${n + 1}" loading="lazy"></a>`;
+  });
+  return `<div class="shots">${shots.join("")}</div>`;
+}
+
 function itemHtml(it, i, open) {
-  if (it.kind === "prompt") return `<div class="msg prompt"><div class="who">you${hhmm(it.ts)}</div>${md(it.text)}</div>`;
+  if (it.kind === "prompt") return `<div class="msg prompt"><div class="who">you${hhmm(it.ts)}</div>${it.text ? md(it.text) : ""}${shotsHtml(it.images)}</div>`;
+  if (it.kind === "compact") return `<details class="compact" data-i="${i}" ${open.has(String(i)) ? "open" : ""}>
+    <summary>Compacted context · summary of the earlier conversation${hhmm(it.ts)}</summary>${md(it.text)}</details>`;
   if (it.kind === "reply") return `<div class="msg reply"><div class="who">claude${hhmm(it.ts)}</div>${md(it.text)}</div>`;
   const cls = ["tc", it.isError ? "err" : "", it.result === null ? "pending" : ""].join(" ");
   return `<details class="${cls}" data-i="${i}" ${open.has(String(i)) ? "open" : ""}>
@@ -264,7 +284,7 @@ function itemHtml(it, i, open) {
 }
 
 const dlg = document.getElementById("detail");
-let detailId = null, detailSig = null;
+let detailId = null, detailTag = null, detailFull = false;
 
 async function loadDetail() {
   if (!detailId) return;
@@ -272,27 +292,29 @@ async function loadDetail() {
   const s = latest[id];
   if (s) document.getElementById("d-head").innerHTML = headHtml(s);
   try {
-    const r = await fetch(`/api/session?id=${encodeURIComponent(id)}`, {cache: "no-store"});
+    const r = await fetch(`/api/session?id=${encodeURIComponent(id)}${detailFull ? "&full=1" : ""}`,
+      {cache: "no-store", headers: detailTag ? {"If-None-Match": detailTag} : {}});
+    if (r.status === 304) return;  // transcript unchanged
     if (!r.ok) throw new Error(r.status);
-    const {items} = await r.json();
+    const {items, total} = await r.json();
     if (id !== detailId) return;
-    const last = items[items.length - 1];
-    const sig = `${items.length}|${last && (last.result ?? last.text ?? "").length}`;
-    if (sig === detailSig) return;
-    detailSig = sig;
+    detailTag = r.headers.get("ETag");
     const body = document.getElementById("d-body");
-    const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+    const fromBottom = body.scrollHeight - body.scrollTop;
+    const atBottom = fromBottom - body.clientHeight < 40;
     const open = new Set([...body.querySelectorAll("details[open]")].map(d => d.dataset.i));
-    body.innerHTML = items.length ? items.map((it, i) => itemHtml(it, i, open)).join("")
-      : `<div class="empty">No conversation yet.</div>`;
-    if (atBottom) body.scrollTop = body.scrollHeight;
+    const offset = total - items.length;  // data-i is the index in the full session, stable across "show earlier"
+    body.innerHTML = (offset > 0 ? `<button class="more" onclick="showEarlier()">Show ${offset} earlier</button>` : "")
+      + (items.length ? items.map((it, i) => itemHtml(it, offset + i, open)).join("")
+        : `<div class="empty">No conversation yet.</div>`);
+    body.scrollTop = atBottom ? body.scrollHeight : body.scrollHeight - fromBottom;
   } catch (e) {
     document.getElementById("d-body").innerHTML = `<div class="empty">Could not load transcript.</div>`;
   }
 }
 
 function openDetail(id) {
-  detailId = id; detailSig = null;
+  detailId = id; detailTag = null; detailFull = false;
   history.replaceState(null, "", `#s=${encodeURIComponent(id)}`);
   const body = document.getElementById("d-body");
   body.innerHTML = `<div class="empty">Loading…</div>`;
@@ -300,6 +322,7 @@ function openDetail(id) {
   dlg.showModal();
   loadDetail().then(() => { body.scrollTop = body.scrollHeight; });
 }
+function showEarlier() { detailFull = true; detailTag = null; loadDetail(); }
 function closeDetail() { dlg.close(); }
 dlg.addEventListener("close", () => { detailId = null; history.replaceState(null, "", location.pathname); });
 dlg.addEventListener("click", e => { if (e.target === dlg) closeDetail(); });  // backdrop

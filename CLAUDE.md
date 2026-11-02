@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Running
 
 - Run with `python3 cc-dash.py [--port N]`; files aren't executable. Serves on 127.0.0.1:7777.
+- Lint with `uvx ruff check .`.
 - `index.html` is read from disk per request: edits need only a browser reload. `cc-dash.py` edits need a server restart.
 - `hook.py` runs fresh per event, and `~/.claude/settings.json` references it by path, so moving or renaming it breaks installed hooks.
 - Paths are hardcoded to the real `~/.claude`, with no fixture dir. Piping test JSON into `hook.py` writes real state files to `~/.claude/cc-dash/state/`, so remove them afterwards.
